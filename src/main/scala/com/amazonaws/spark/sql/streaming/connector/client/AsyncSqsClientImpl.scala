@@ -20,24 +20,21 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent._
 import java.util.function.{BiConsumer, BiFunction, Consumer}
-
 import scala.collection.JavaConverters.{collectionAsScalaIterableConverter, seqAsJavaListConverter}
 import scala.collection.mutable.ArrayBuffer
 import scala.language.postfixOps
 import scala.util.{Failure, Try}
 import scala.util.control.Breaks.{break, breakable}
 import scala.util.control.NonFatal
-
 import com.amazonaws.spark.sql.streaming.connector.{FileMetadata, S3ConnectorSourceOptions}
 import com.amazonaws.spark.sql.streaming.connector.Utils.{convertTimestampToMills, reportTimeTaken, shutdownAndAwaitTermination}
 import com.amazonaws.spark.sql.streaming.connector.client.AsyncQueueConsumerResults.AsyncQueueConsumerResult
 import com.amazonaws.spark.sql.streaming.connector.client.AsyncSqsClientImpl.{MAX_POOL_SIZE, MAX_SQS_BATCH_SIZE}
-import org.json4s.{DefaultFormats, MappingException}
+import org.json4s.{DefaultFormats, JField, MappingException}
 import org.json4s.JsonAST.JValue
 import org.json4s.jackson.JsonMethods.parse
 import software.amazon.awssdk.services.sqs.SqsAsyncClient
 import software.amazon.awssdk.services.sqs.model._
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.streaming.connector.s3.S3SparkUtils.{newDaemonFixedThreadPool, newDaemonSingleThreadScheduledExecutor}
 
@@ -325,7 +322,17 @@ class AsyncSqsClientImpl[T] (client: SqsAsyncClient,
       val messageBody = message.body
       logDebug(s"parse SQS message body: ${messageBody}")
 
-      val messageJson = parse(messageBody).extract[JValue]
+      var messageJson = parse(messageBody).extract[JValue]
+
+      val hasMessageField = messageJson.findField {
+        case JField("Message", _) => true
+        case _ => false
+      }.isDefined
+      if (hasMessageField) {
+        logDebug(s"parse SNS message body")
+        messageJson = parse((messageJson \ "Message").extract[String]).extract[JValue]
+      }
+
       val bucketName = (
         messageJson \ "Records" \ "s3" \ "bucket" \ "name").extract[Array[String]].head
       val eventName = (messageJson \ "Records" \ "eventName").extract[Array[String]].head
